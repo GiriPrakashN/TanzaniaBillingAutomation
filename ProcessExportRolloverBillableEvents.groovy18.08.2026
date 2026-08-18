@@ -1,0 +1,1775 @@
+/*
+ * Copyright (c) 2025 TEAGTL. All Rights Reserved.
+ */
+
+package com.navis.tpa2.custom
+
+import com.navis.external.services.AbstractGeneralNoticeCodeExtension
+import com.navis.framework.business.Roastery
+import com.navis.framework.util.LogUtils
+import com.navis.inventory.business.units.Unit
+import com.navis.inventory.business.units.UnitFacilityVisit
+import com.navis.orders.business.eqorders.Booking
+import com.navis.argo.business.api.ServicesManager
+import com.navis.argo.business.extract.ChargeableUnitEvent
+import com.navis.services.business.event.Event
+import com.navis.services.business.event.GroovyEvent
+import com.navis.services.business.rules.EventType
+import org.apache.log4j.Level
+
+import java.util.ArrayList
+import java.util.List
+import java.util.Map
+import java.util.HashMap
+
+
+class ProcessExportRolloverBillableEvents
+        extends AbstractGeneralNoticeCodeExtension {
+
+
+    /*
+     * ==============================================================
+     * EVENT CONSTANTS
+     * ==============================================================
+     */
+
+    private static final String TRIGGER_EVENT =
+            "UNIT_EXPORT_VESSEL_REROUTE_YARD"
+
+    private static final String ROLL_OVER_EVENT =
+            "UV_ROLL_OVER"
+
+    private static final String DOCUMENTATION_EVENT =
+            "UV_DOCUMENTATION"
+
+    private static final String EXPORT_CATEGORY =
+            "EXPRT"
+
+
+    /*
+     * ==============================================================
+     * EVENT NOTES
+     * ==============================================================
+     */
+
+    private static final String ROLL_OVER_NOTE =
+            "Export Vessel RollOver billable event."
+
+    private static final String DOCUMENTATION_NOTE =
+            "Export Vessel RollOver documentation billable event."
+
+
+    /*
+     * ==============================================================
+     * JVM LOCK
+     * ==============================================================
+     */
+
+    private static final Object BILLABLE_EVENT_LOCK =
+            new Object()
+
+
+    /*
+     * ==============================================================
+     * BULK REROUTE CACHE
+     * ==============================================================
+     */
+
+    private static final long BULK_REROUTE_WINDOW_MILLIS =
+            2000L
+
+    /*
+     * IMPORTANT:
+     * Keep this declaration on ONE line.
+     */
+    private static final Map<String, Long> DOCUMENTATION_OPERATION_CACHE = new HashMap<String, Long>()
+
+
+    @Override
+    void execute(GroovyEvent inGroovyEvent) {
+
+        LogUtils.setLogLevel(
+                this.class,
+                Level.INFO
+        )
+
+        log("")
+        log("==============================================================")
+        log("PROCESS EXPORT ROLLOVER BILLABLE EVENTS - START")
+        log("==============================================================")
+
+
+        try {
+
+            /*
+             * ======================================================
+             * EVENT
+             * ======================================================
+             */
+
+            if (inGroovyEvent == null) {
+
+                log("GroovyEvent: NULL")
+
+                return
+            }
+
+
+            Event event =
+                    inGroovyEvent.getEvent()
+
+
+            if (event == null) {
+
+                log("Event: NULL")
+
+                return
+            }
+
+
+            String eventTypeId =
+                    event.getEventTypeId()
+
+
+            log(
+                    "Triggered Event Type: " +
+                    "${eventTypeId}"
+            )
+
+
+            if (!TRIGGER_EVENT.equals(
+                    eventTypeId)) {
+
+                log(
+                        "Triggered event is not " +
+                        "${TRIGGER_EVENT}"
+                )
+
+                return
+            }
+
+
+            /*
+             * ======================================================
+             * UNIT
+             * ======================================================
+             */
+
+            Unit unit =
+                    (Unit) inGroovyEvent.getEntity()
+
+
+            if (unit == null) {
+
+                log("Unit: NULL")
+
+                return
+            }
+
+
+            String equipmentNumber =
+                    unit.getUnitId()
+
+
+            Long unitGkey =
+                    unit.getUnitGkey() as Long
+
+
+            log(
+                    "Equipment Number: " +
+                    "${equipmentNumber}"
+            )
+
+            log(
+                    "Unit GKEY: " +
+                    "${unitGkey}"
+            )
+
+
+            /*
+             * ======================================================
+             * UNIT CATEGORY
+             * ======================================================
+             */
+
+            String unitCategory = null
+
+
+            try {
+
+                unitCategory =
+                        unit.getUnitCategory()?.getKey()
+
+            } catch (Exception ignored) {
+            }
+
+
+            log(
+                    "Unit Category: " +
+                    "${unitCategory}"
+            )
+
+
+            if (!EXPORT_CATEGORY.equals(
+                    unitCategory)) {
+
+                log(
+                        "Unit ${equipmentNumber} is not EXPRT."
+                )
+
+                return
+            }
+
+
+            /*
+             * ======================================================
+             * UFV
+             * ======================================================
+             */
+
+            UnitFacilityVisit ufv =
+                    unit.getUnitActiveUfvNowActive()
+
+
+            if (ufv == null) {
+
+                ufv =
+                        unit.findProbableInitialUfv()
+            }
+
+
+            if (ufv == null) {
+
+                log("UFV: NULL")
+
+                return
+            }
+
+
+            Long ufvGkey =
+                    ufv.getUfvGkey() as Long
+
+
+            log(
+                    "UFV GKEY: " +
+                    "${ufvGkey}"
+            )
+
+            log(
+                    "UFV: " +
+                    "${ufv}"
+            )
+
+
+            /*
+             * ======================================================
+             * BOOKING
+             * ======================================================
+             */
+
+            Booking booking =
+                    resolveBooking(unit)
+
+
+            String bookingNumber =
+                    resolveBookingNumber(booking)
+
+
+            log(
+                    "Booking Number: " +
+                    "${bookingNumber}"
+            )
+
+
+            /*
+             * ======================================================
+             * UV_ROLL_OVER
+             * ======================================================
+             */
+
+            log(
+                    "--------------------------------------------------------------"
+            )
+
+            log(
+                    "Event: " +
+                    "${ROLL_OVER_EVENT}"
+            )
+
+            log(
+                    "Equipment: " +
+                    "${equipmentNumber}"
+            )
+
+            log(
+                    "Unit GKEY: " +
+                    "${unitGkey}"
+            )
+
+            log(
+                    "UFV GKEY: " +
+                    "${ufvGkey}"
+            )
+
+
+            boolean rolloverRecorded =
+                    processBillableEvent(
+                            unit,
+                            ufv,
+                            ROLL_OVER_EVENT,
+                            ROLL_OVER_NOTE
+                    )
+
+
+            log(
+                    "${ROLL_OVER_EVENT} recorded: " +
+                    "${rolloverRecorded}"
+            )
+
+
+            /*
+             * ======================================================
+             * UV_DOCUMENTATION
+             * ======================================================
+             */
+
+            log(
+                    "--------------------------------------------------------------"
+            )
+
+            log(
+                    "Event: " +
+                    "${DOCUMENTATION_EVENT}"
+            )
+
+            log(
+                    "Booking Number: " +
+                    "${bookingNumber}"
+            )
+
+
+            if (booking == null) {
+
+                log(
+                        "${DOCUMENTATION_EVENT}: " +
+                        "Booking could not be resolved."
+                )
+
+                return
+            }
+
+
+            if (bookingNumber == null ||
+                    bookingNumber.trim().isEmpty()) {
+
+                log(
+                        "${DOCUMENTATION_EVENT}: " +
+                        "Booking Number is NULL."
+                )
+
+                return
+            }
+
+
+            boolean documentationRecorded =
+                    processBookingDocumentation(
+                            booking,
+                            bookingNumber,
+                            unit
+                    )
+
+
+            log(
+                    "${DOCUMENTATION_EVENT} recorded: " +
+                    "${documentationRecorded}"
+            )
+
+
+        } catch (Exception e) {
+
+            log(
+                    "Exception Type: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "Exception Message: " +
+                    "${e.getMessage()}"
+            )
+
+        } finally {
+
+            log(
+                    "=============================================================="
+            )
+
+            log(
+                    "PROCESS EXPORT ROLLOVER BILLABLE EVENTS - COMPLETED"
+            )
+
+            log(
+                    "=============================================================="
+            )
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * BOOKING RESOLUTION
+     * ==============================================================
+     */
+
+    private Booking resolveBooking(
+            Unit unit) {
+
+        if (unit == null) {
+
+            return null
+        }
+
+
+        try {
+
+            def departureOrderItem =
+                    unit.getUnitDepartureOrderItem()
+
+
+            if (departureOrderItem == null) {
+
+                log(
+                        "Departure Order Item: NULL"
+                )
+
+                return null
+            }
+
+
+            log(
+                    "Departure Order Item: " +
+                    "${departureOrderItem}"
+            )
+
+
+            def departureOrder =
+                    departureOrderItem.getEqboiOrder()
+
+
+            if (departureOrder == null) {
+
+                log(
+                        "Departure Order: NULL"
+                )
+
+                return null
+            }
+
+
+            log(
+                    "Departure Order: " +
+                    "${departureOrder}"
+            )
+
+
+            String bookingNumber = null
+
+
+            try {
+
+                bookingNumber =
+                        departureOrder.getEqboNbr()
+
+            } catch (Exception ignored) {
+            }
+
+
+            if (bookingNumber == null ||
+                    bookingNumber.trim().isEmpty()) {
+
+                try {
+
+                    def method =
+                            departureOrder
+                                    .getClass()
+                                    .getMethod(
+                                            "getEqboNbr"
+                                    )
+
+                    bookingNumber =
+                            method.invoke(
+                                    departureOrder
+                            ) as String
+
+                } catch (Exception ignored) {
+                }
+            }
+
+
+            log(
+                    "Booking Number: " +
+                    "${bookingNumber}"
+            )
+
+
+            if (bookingNumber == null ||
+                    bookingNumber.trim().isEmpty()) {
+
+                return null
+            }
+
+
+            def bookings =
+                    Booking.findBookingsByNbr(
+                            bookingNumber
+                    )
+
+
+            if (bookings == null ||
+                    bookings.isEmpty()) {
+
+                log(
+                        "Booking Count: 0"
+                )
+
+                return null
+            }
+
+
+            log(
+                    "Booking Count: " +
+                    "${bookings.size()}"
+            )
+
+
+            Booking booking =
+                    bookings[0] as Booking
+
+
+            log(
+                    "Booking: " +
+                    "${booking}"
+            )
+
+            log(
+                    "Booking Number: " +
+                    "${booking.getEqboNbr()}"
+            )
+
+
+            return booking
+
+
+        } catch (Exception e) {
+
+            log(
+                    "Booking Resolution Exception: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "Booking Resolution Message: " +
+                    "${e.getMessage()}"
+            )
+
+            return null
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * BOOKING NUMBER
+     * ==============================================================
+     */
+
+    private String resolveBookingNumber(
+            Booking booking) {
+
+        if (booking == null) {
+
+            return null
+        }
+
+
+        String bookingNumber = null
+
+
+        try {
+
+            bookingNumber =
+                    booking.getEqboNbr()
+
+        } catch (Exception ignored) {
+        }
+
+
+        if (bookingNumber == null ||
+                bookingNumber.trim().isEmpty()) {
+
+            try {
+
+                bookingNumber =
+                        booking.getDocumentNbr()
+
+            } catch (Exception ignored) {
+            }
+        }
+
+
+        return bookingNumber
+    }
+
+
+    /*
+     * ==============================================================
+     * NORMAL UNIT BILLABLE EVENT
+     * ==============================================================
+     */
+
+    private boolean processBillableEvent(
+            Unit unit,
+            UnitFacilityVisit ufv,
+            String eventId,
+            String note) {
+
+        synchronized (BILLABLE_EVENT_LOCK) {
+
+            return processBillableEventInternal(
+                    unit,
+                    ufv,
+                    eventId,
+                    note
+            )
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * NORMAL BILLABLE EVENT DECISION
+     * ==============================================================
+     */
+
+    private boolean processBillableEventInternal(
+            Unit unit,
+            UnitFacilityVisit ufv,
+            String eventId,
+            String note) {
+
+        if (unit == null ||
+                ufv == null) {
+
+            log(
+                    "${eventId}: Unit/UFV is NULL."
+            )
+
+            return false
+        }
+
+
+        Long unitGkey =
+                unit.getUnitGkey() as Long
+
+
+        Long ufvGkey =
+                ufv.getUfvGkey() as Long
+
+
+        try {
+
+            EventType eventType =
+                    EventType.findEventType(
+                            eventId
+                    )
+
+
+            if (eventType == null) {
+
+                log(
+                        "EventType not found: " +
+                        "${eventId}"
+                )
+
+                return false
+            }
+
+
+            List<ChargeableUnitEvent> cues =
+                    findUnitBillableEvents(
+                            unitGkey,
+                            eventId
+                    )
+
+
+            int cueCount =
+                    cues == null
+                            ? 0
+                            : cues.size()
+
+
+            log(
+                    "${eventId} CUE Count: " +
+                    "${cueCount}"
+            )
+
+
+            if (cueCount == 0) {
+
+                log(
+                        "${eventId}: no existing CUE."
+                )
+
+
+                return recordBillableEvent(
+                        unit,
+                        eventType,
+                        eventId,
+                        note
+                )
+            }
+
+
+            boolean queuedFound =
+                    false
+
+
+            for (ChargeableUnitEvent cue :
+                    cues) {
+
+                if (cue == null) {
+
+                    continue
+                }
+
+
+                Long cueGkey = null
+                String cueEventType = null
+                String cueStatus = null
+                Long cueUnitGkey = null
+                Long cueUfvGkey = null
+                String cueEquipment = null
+
+
+                try {
+                    cueGkey =
+                            cue.getEventGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueEventType =
+                            cue.getEventType()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueStatus =
+                            cue.getStatus()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueUnitGkey =
+                            cue.getBexuUnitGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueUfvGkey =
+                            cue.getBexuUfvGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueEquipment =
+                            cue.getBexuEqId()
+                } catch (Exception ignored) {
+                }
+
+
+                log(
+                        "CUE GKEY: " +
+                        "${cueGkey}"
+                )
+
+                log(
+                        "CUE Event Type: " +
+                        "${cueEventType}"
+                )
+
+                log(
+                        "CUE Status: " +
+                        "${cueStatus}"
+                )
+
+                log(
+                        "CUE Unit GKEY: " +
+                        "${cueUnitGkey}"
+                )
+
+                log(
+                        "CUE UFV GKEY: " +
+                        "${cueUfvGkey}"
+                )
+
+                log(
+                        "CUE Equipment: " +
+                        "${cueEquipment}"
+                )
+
+
+                if (!eventId.equals(
+                        cueEventType)) {
+
+                    continue
+                }
+
+
+                if (unitGkey != null &&
+                        cueUnitGkey != null &&
+                        !unitGkey.equals(
+                                cueUnitGkey)) {
+
+                    continue
+                }
+
+
+                if (ufvGkey != null &&
+                        cueUfvGkey != null &&
+                        !ufvGkey.equals(
+                                cueUfvGkey)) {
+
+                    continue
+                }
+
+
+                if (ChargeableUnitEvent.QUEUED.equals(
+                        cueStatus)) {
+
+                    queuedFound =
+                            true
+
+                    log(
+                            "${eventId}: QUEUED CUE FOUND."
+                    )
+
+                    break
+                }
+            }
+
+
+            if (queuedFound) {
+
+                log(
+                        "${eventId}: existing QUEUED event found."
+                )
+
+                log(
+                        "${eventId}: NOT RECORDED."
+                )
+
+                return false
+            }
+
+
+            log(
+                    "${eventId}: existing event(s) found, " +
+                    "but none are QUEUED."
+            )
+
+
+            return recordBillableEvent(
+                    unit,
+                    eventType,
+                    eventId,
+                    note
+            )
+
+
+        } catch (Exception e) {
+
+            log(
+                    "${eventId} Exception: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "${eventId} Message: " +
+                    "${e.getMessage()}"
+            )
+
+            return false
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * BOOKING DOCUMENTATION
+     * ==============================================================
+     */
+
+    private boolean processBookingDocumentation(
+            Booking booking,
+            String bookingNumber,
+            Unit rolloverUnit) {
+
+        synchronized (BILLABLE_EVENT_LOCK) {
+
+            /*
+             * ------------------------------------------------------
+             * STEP 1
+             * JVM CACHE
+             * ------------------------------------------------------
+             */
+
+            long now =
+                    System.currentTimeMillis()
+
+
+            Long previousDocumentationTime =
+                    DOCUMENTATION_OPERATION_CACHE.get(
+                            bookingNumber
+                    )
+
+
+            if (previousDocumentationTime != null) {
+
+                long elapsed =
+                        now -
+                        previousDocumentationTime.longValue()
+
+
+                log(
+                        "Booking Documentation Cache:"
+                )
+
+                log(
+                        "Booking: " +
+                        "${bookingNumber}"
+                )
+
+                log(
+                        "Previous Documentation Time: " +
+                        "${previousDocumentationTime}"
+                )
+
+                log(
+                        "Elapsed Time: " +
+                        "${elapsed} ms"
+                )
+
+
+                if (elapsed >= 0 &&
+                        elapsed <=
+                        BULK_REROUTE_WINDOW_MILLIS) {
+
+                    log(
+                            "${DOCUMENTATION_EVENT}: " +
+                            "same bulk reroute window detected."
+                    )
+
+                    log(
+                            "Booking ${bookingNumber} already generated " +
+                            "${DOCUMENTATION_EVENT}."
+                    )
+
+                    log(
+                            "${DOCUMENTATION_EVENT}: NOT RECORDED."
+                    )
+
+                    return false
+                }
+
+
+                DOCUMENTATION_OPERATION_CACHE.remove(
+                        bookingNumber
+                )
+            }
+
+
+            /*
+             * ------------------------------------------------------
+             * STEP 2
+             * FIND ALL UNITS FOR BOOKING
+             * ------------------------------------------------------
+             */
+
+            List<Unit> associatedUnits =
+                    findUnitsForBookingNumber(
+                            bookingNumber
+                    )
+
+
+            /*
+             * Always include triggering unit.
+             */
+
+            if (!containsUnit(
+                    associatedUnits,
+                    rolloverUnit)) {
+
+                associatedUnits.add(
+                        rolloverUnit
+                )
+            }
+
+
+            log(
+                    "Booking Associated Unit Count: " +
+                    "${associatedUnits.size()}"
+            )
+
+
+            /*
+             * ------------------------------------------------------
+             * STEP 3
+             * CHECK ANY QUEUED DOCUMENTATION
+             * ------------------------------------------------------
+             *
+             * THIS IS THE IMPORTANT FIX.
+             *
+             * If ANY container under this booking already has
+             * a QUEUED UV_DOCUMENTATION CUE, do not record another
+             * documentation event.
+             */
+
+            boolean queuedDocumentationFound =
+                    findQueuedDocumentationForBooking(
+                            associatedUnits
+                    )
+
+
+            if (queuedDocumentationFound) {
+
+                log(
+                        "${DOCUMENTATION_EVENT}: " +
+                        "QUEUED CUE already exists somewhere " +
+                        "under booking ${bookingNumber}."
+                )
+
+                log(
+                        "${DOCUMENTATION_EVENT}: " +
+                        "NO NEW DOCUMENTATION WILL BE RECORDED."
+                )
+
+                return false
+            }
+
+
+            /*
+             * ------------------------------------------------------
+             * STEP 4
+             * RECORD ONE DOCUMENTATION EVENT
+             * ------------------------------------------------------
+             */
+
+            UnitFacilityVisit rolloverUfv =
+                    rolloverUnit
+                            .getUnitActiveUfvNowActive()
+
+
+            if (rolloverUfv == null) {
+
+                rolloverUfv =
+                        rolloverUnit
+                                .findProbableInitialUfv()
+            }
+
+
+            if (rolloverUfv == null) {
+
+                log(
+                        "Rollover UFV: NULL"
+                )
+
+                return false
+            }
+
+
+            EventType documentationEventType =
+                    EventType.findEventType(
+                            DOCUMENTATION_EVENT
+                    )
+
+
+            if (documentationEventType == null) {
+
+                log(
+                        "EventType not found: " +
+                        "${DOCUMENTATION_EVENT}"
+                )
+
+                return false
+            }
+
+
+            log(
+                    "No QUEUED ${DOCUMENTATION_EVENT} found " +
+                    "for booking ${bookingNumber}."
+            )
+
+            log(
+                    "Documentation Target: " +
+                    "${rolloverUnit.getUnitId()}"
+            )
+
+
+            /*
+             * ------------------------------------------------------
+             * STEP 5
+             * REGISTER CACHE BEFORE RECORD
+             * ------------------------------------------------------
+             */
+
+            DOCUMENTATION_OPERATION_CACHE.put(
+                    bookingNumber,
+                    now
+            )
+
+
+            log(
+                    "Documentation operation registered for booking: " +
+                    "${bookingNumber}"
+            )
+
+            log(
+                    "Bulk reroute grouping window: " +
+                    "${BULK_REROUTE_WINDOW_MILLIS} ms"
+            )
+
+
+            boolean recorded =
+                    recordBillableEvent(
+                            rolloverUnit,
+                            documentationEventType,
+                            DOCUMENTATION_EVENT,
+                            DOCUMENTATION_NOTE
+                    )
+
+
+            /*
+             * ------------------------------------------------------
+             * STEP 6
+             * REMOVE CACHE IF RECORD FAILED
+             * ------------------------------------------------------
+             */
+
+            if (!recorded) {
+
+                DOCUMENTATION_OPERATION_CACHE.remove(
+                        bookingNumber
+                )
+
+
+                log(
+                        "Documentation recording failed."
+                )
+
+                log(
+                        "Booking operation cache removed for retry."
+                )
+            }
+
+
+            return recorded
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * FIND QUEUED DOCUMENTATION FOR BOOKING
+     * ==============================================================
+     *
+     * BUSINESS RULE:
+     *
+     * ANY unit under the booking having:
+     *
+     * UV_DOCUMENTATION + QUEUED
+     *
+     * blocks creation of another UV_DOCUMENTATION.
+     *
+     * NON BILLABLE does NOT block.
+     */
+
+    private boolean findQueuedDocumentationForBooking(
+            List<Unit> associatedUnits) {
+
+        if (associatedUnits == null ||
+                associatedUnits.isEmpty()) {
+
+            log(
+                    "No associated units found for booking."
+            )
+
+            return false
+        }
+
+
+        log(
+                "Checking booking for existing QUEUED " +
+                "${DOCUMENTATION_EVENT}..."
+        )
+
+
+        for (Unit associatedUnit :
+                associatedUnits) {
+
+            if (associatedUnit == null) {
+
+                continue
+            }
+
+
+            String equipmentNumber =
+                    associatedUnit.getUnitId()
+
+
+            Long associatedUnitGkey =
+                    associatedUnit.getUnitGkey() as Long
+
+
+            log(
+                    "Checking Documentation CUE for: " +
+                    "${equipmentNumber}"
+            )
+
+            log(
+                    "Documentation Check Unit GKEY: " +
+                    "${associatedUnitGkey}"
+            )
+
+
+            List<ChargeableUnitEvent> documentationCues =
+                    findUnitBillableEvents(
+                            associatedUnitGkey,
+                            DOCUMENTATION_EVENT
+                    )
+
+
+            if (documentationCues == null ||
+                    documentationCues.isEmpty()) {
+
+                log(
+                        "${equipmentNumber}: " +
+                        "No ${DOCUMENTATION_EVENT} CUE."
+                )
+
+                continue
+            }
+
+
+            for (ChargeableUnitEvent cue :
+                    documentationCues) {
+
+                if (cue == null) {
+
+                    continue
+                }
+
+
+                Long cueGkey = null
+                String cueEventType = null
+                String cueStatus = null
+                Long cueUnitGkey = null
+                Long cueUfvGkey = null
+                String cueEquipment = null
+
+
+                try {
+                    cueGkey =
+                            cue.getEventGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueEventType =
+                            cue.getEventType()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueStatus =
+                            cue.getStatus()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueUnitGkey =
+                            cue.getBexuUnitGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueUfvGkey =
+                            cue.getBexuUfvGkey()
+                } catch (Exception ignored) {
+                }
+
+
+                try {
+                    cueEquipment =
+                            cue.getBexuEqId()
+                } catch (Exception ignored) {
+                }
+
+
+                log(
+                        "Documentation CUE GKEY: " +
+                        "${cueGkey}"
+                )
+
+                log(
+                        "Documentation CUE Event Type: " +
+                        "${cueEventType}"
+                )
+
+                log(
+                        "Documentation CUE Status: " +
+                        "${cueStatus}"
+                )
+
+                log(
+                        "Documentation CUE Unit GKEY: " +
+                        "${cueUnitGkey}"
+                )
+
+                log(
+                        "Documentation CUE UFV GKEY: " +
+                        "${cueUfvGkey}"
+                )
+
+                log(
+                        "Documentation CUE Equipment: " +
+                        "${cueEquipment}"
+                )
+
+
+                /*
+                 * Only QUEUED blocks.
+                 */
+
+                if (DOCUMENTATION_EVENT.equals(
+                        cueEventType) &&
+                        ChargeableUnitEvent.QUEUED.equals(
+                                cueStatus)) {
+
+                    log(
+                            "=============================================================="
+                    )
+
+                    log(
+                            "QUEUED ${DOCUMENTATION_EVENT} FOUND"
+                    )
+
+                    log(
+                            "Equipment: " +
+                            "${equipmentNumber}"
+                    )
+
+                    log(
+                            "Unit GKEY: " +
+                            "${associatedUnitGkey}"
+                    )
+
+                    log(
+                            "CUE GKEY: " +
+                            "${cueGkey}"
+                    )
+
+                    log(
+                            "Booking documentation already exists."
+                    )
+
+                    log(
+                            "NO NEW ${DOCUMENTATION_EVENT} WILL BE RECORDED."
+                    )
+
+                    log(
+                            "=============================================================="
+                    )
+
+                    return true
+                }
+            }
+        }
+
+
+        log(
+                "No QUEUED ${DOCUMENTATION_EVENT} found " +
+                "for any booking unit."
+        )
+
+
+        return false
+    }
+
+
+    /*
+     * ==============================================================
+     * FIND ALL UNITS FOR BOOKING NUMBER
+     * ==============================================================
+     */
+
+    private List<Unit> findUnitsForBookingNumber(
+            String bookingNumber) {
+
+        List<Unit> associatedUnits =
+                new ArrayList<Unit>()
+
+
+        if (bookingNumber == null ||
+                bookingNumber.trim().isEmpty()) {
+
+            log(
+                    "findUnitsForBookingNumber: " +
+                    "Booking Number is NULL/blank."
+            )
+
+            return associatedUnits
+        }
+
+
+        try {
+
+            def hibernate =
+                    Roastery.getHibernateApi()
+
+
+            if (hibernate == null) {
+
+                log(
+                        "findUnitsForBookingNumber: " +
+                        "Hibernate API is NULL."
+                )
+
+                return associatedUnits
+            }
+
+
+            String safeBookingNumber =
+                    bookingNumber.replace(
+                            "'",
+                            "''"
+                    )
+
+
+            String hql = """
+                FROM Unit unit
+                WHERE unit.unitDepartureOrderItem.eqboiOrder.eqboNbr =
+                    '${safeBookingNumber}'
+            """
+
+
+            log(
+                    "Booking Unit HQL: " +
+                    "${hql}"
+            )
+
+
+            def result =
+                    hibernate.find(
+                            hql
+                    )
+
+
+            if (result == null) {
+
+                log(
+                        "Booking Unit Query Result: NULL"
+                )
+
+                return associatedUnits
+            }
+
+
+            for (Object resultObject :
+                    result) {
+
+                if (!(resultObject instanceof Unit)) {
+
+                    continue
+                }
+
+
+                Unit associatedUnit =
+                        (Unit) resultObject
+
+
+                if (!containsUnit(
+                        associatedUnits,
+                        associatedUnit)) {
+
+                    associatedUnits.add(
+                            associatedUnit
+                    )
+                }
+            }
+
+
+            log(
+                    "Booking Unit Query Result Count: " +
+                    "${associatedUnits.size()}"
+            )
+
+
+            for (Unit associatedUnit :
+                    associatedUnits) {
+
+                if (associatedUnit == null) {
+
+                    continue
+                }
+
+
+                log(
+                        "Booking Associated Unit: " +
+                        "${associatedUnit.getUnitId()}"
+                )
+
+                log(
+                        "Booking Associated Unit GKEY: " +
+                        "${associatedUnit.getUnitGkey()}"
+                )
+            }
+
+
+            return associatedUnits
+
+
+        } catch (Exception e) {
+
+            log(
+                    "Booking Unit Query Exception: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "Booking Unit Query Message: " +
+                    "${e.getMessage()}"
+            )
+
+            return associatedUnits
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * UNIT COMPARISON
+     * ==============================================================
+     */
+
+    private boolean containsUnit(
+            List<Unit> units,
+            Unit targetUnit) {
+
+        if (units == null ||
+                targetUnit == null) {
+
+            return false
+        }
+
+
+        Long targetGkey =
+                targetUnit.getUnitGkey() as Long
+
+
+        for (Unit existingUnit :
+                units) {
+
+            if (existingUnit == null) {
+
+                continue
+            }
+
+
+            Long existingGkey =
+                    existingUnit.getUnitGkey() as Long
+
+
+            if (targetGkey != null &&
+                    existingGkey != null &&
+                    targetGkey.equals(
+                            existingGkey)) {
+
+                return true
+            }
+        }
+
+
+        return false
+    }
+
+
+    /*
+     * ==============================================================
+     * FIND UNIT CUES
+     * ==============================================================
+     */
+
+    private List<ChargeableUnitEvent> findUnitBillableEvents(
+            Long unitGkey,
+            String eventId) {
+
+        if (unitGkey == null ||
+                eventId == null ||
+                eventId.trim().isEmpty()) {
+
+            return []
+        }
+
+
+        try {
+
+            def hibernate =
+                    Roastery.getHibernateApi()
+
+
+            if (hibernate == null) {
+
+                log(
+                        "Hibernate API: NULL"
+                )
+
+                return []
+            }
+
+
+            String safeEventId =
+                    eventId.replace(
+                            "'",
+                            "''"
+                    )
+
+
+            String hql = """
+                FROM ChargeableUnitEvent cue
+                WHERE cue.bexuUnitGkey = ${unitGkey}
+                AND cue.bexuEventType = '${safeEventId}'
+            """
+
+
+            log(
+                    "CUE Query Unit GKEY: " +
+                    "${unitGkey}"
+            )
+
+            log(
+                    "CUE Query Event Type: " +
+                    "${eventId}"
+            )
+
+
+            def result =
+                    hibernate.find(
+                            hql
+                    )
+
+
+            if (result == null) {
+
+                return []
+            }
+
+
+            return result as List<ChargeableUnitEvent>
+
+
+        } catch (Exception e) {
+
+            log(
+                    "CUE Query Exception: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "CUE Query Message: " +
+                    "${e.getMessage()}"
+            )
+
+            return []
+        }
+    }
+
+
+    /*
+     * ==============================================================
+     * RECORD BILLABLE EVENT
+     * ==============================================================
+     */
+
+    private boolean recordBillableEvent(
+            Unit unit,
+            EventType eventType,
+            String eventId,
+            String note) {
+
+        try {
+
+            ServicesManager servicesManager =
+                    (ServicesManager) Roastery.getBean(
+                            ServicesManager.BEAN_ID
+                    )
+
+
+            if (servicesManager == null) {
+
+                log(
+                        "ServicesManager: NULL"
+                )
+
+                return false
+            }
+
+
+            log(
+                    "Recording ${eventId} for " +
+                    "${unit.getUnitId()}"
+            )
+
+
+            servicesManager.recordEvent(
+                    eventType,
+                    note,
+                    null,
+                    null,
+                    unit,
+                    null
+            )
+
+
+            log(
+                    "${eventId}: RECORDED"
+            )
+
+
+            return true
+
+
+        } catch (Exception e) {
+
+            log(
+                    "${eventId} Recording Exception: " +
+                    "${e.getClass().getName()}"
+            )
+
+            log(
+                    "${eventId} Recording Message: " +
+                    "${e.getMessage()}"
+            )
+
+            return false
+        }
+    }
+}
